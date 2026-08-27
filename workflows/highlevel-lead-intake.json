@@ -1,0 +1,650 @@
+{
+  "name": "HighLevel - Incoming Lead Intake (Public Template)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "highlevel-lead-intake",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "d7115799-6ee8-4c78-bd38-036df2c5224f",
+      "name": "Incoming Lead Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        896,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $json.body ?? $json;\nconst clean = v => typeof v === 'string' ? v.trim() : '';\nconst email = clean(raw.email).toLowerCase();\nconst phone = clean(raw.phone);\nconst firstName = clean(raw.firstName ?? raw.first_name);\nconst lastName = clean(raw.lastName ?? raw.last_name);\nconst fullName = clean(raw.name) || [firstName, lastName].filter(Boolean).join(' ');\nconst externalLeadId = clean(raw.externalLeadId ?? raw.external_lead_id ?? raw.leadId ?? raw.lead_id);\nconst serviceInterest = clean(raw.serviceInterest ?? raw.service_interest ?? raw.service);\nconst source = clean(raw.source) || 'Website webhook';\nconst errors = [];\nif (!externalLeadId) errors.push('externalLeadId is required');\nif (!serviceInterest) errors.push('serviceInterest is required');\nif (!email && !phone) errors.push('email or phone is required');\nif (email && !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) errors.push('email format is invalid');\nif (!fullName) errors.push('name or firstName/lastName is required');\nreturn [{ json: {\n  locationId: 'YOUR_GHL_LOCATION_ID',\n  pipelineId: 'YOUR_GHL_PIPELINE_ID',\n  stageId: 'YOUR_GHL_STAGE_ID',\n  serviceInterestFieldId: 'YOUR_SERVICE_INTEREST_FIELD_ID',\n  externalLeadIdFieldId: 'YOUR_EXTERNAL_LEAD_ID_FIELD_ID',\n  email, phone, firstName, lastName, name: fullName, externalLeadId, serviceInterest, source,\n  companyName: clean(raw.companyName ?? raw.company_name),\n  monetaryValue: Number.isFinite(Number(raw.monetaryValue ?? raw.monetary_value)) ? Number(raw.monetaryValue ?? raw.monetary_value) : 0,\n  validationErrors: errors\n} }];"
+      },
+      "id": "5f994181-5fd2-437d-8ec8-ac81d8c9898e",
+      "name": "Normalize and Validate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.validationErrors.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "4c20c7f5-f73d-43c9-b26f-51563ea91b71",
+      "name": "Invalid Payload?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1344,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: 'VALIDATION_ERROR', details: $json.validationErrors } }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "c2bc7064-64fc-4a82-9095-3b2c29f6252f",
+      "name": "Respond 400 Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1568,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://services.leadconnectorhq.com/contacts/search/duplicate?locationId=' + encodeURIComponent($json.locationId) + ($json.email ? '&email=' + encodeURIComponent($json.email) : '&number=' + encodeURIComponent($json.phone)) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Version",
+              "value": "v3"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "5c744c5c-4c23-408f-902e-e4a30d8540cc",
+      "name": "Find Duplicate Contact",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1568,
+        208
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ Boolean($json.contact?.id || $json.id || $json.contacts?.[0]?.id) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "5453940a-89f2-4e01-b8e2-d4291145020c",
+      "name": "Contact Exists?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1792,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const found = $json.contact ?? $json.contacts?.[0] ?? $json;\nconst lead = $('Normalize and Validate').first().json;\nif (!found?.id) throw new Error('HighLevel contact search returned an unexpected response');\nreturn [{ json: { ...lead, contactId: found.id, contactCreated: false } }];"
+      },
+      "id": "e4d43bb2-94a5-49e5-9ad3-6def4a2d1af1",
+      "name": "Use Existing Contact",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2240,
+        -32
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://services.leadconnectorhq.com/contacts/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Version",
+              "value": "v3"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify(Object.fromEntries(Object.entries({ locationId: $('Normalize and Validate').first().json.locationId, firstName: $('Normalize and Validate').first().json.firstName, lastName: $('Normalize and Validate').first().json.lastName, name: $('Normalize and Validate').first().json.name, email: $('Normalize and Validate').first().json.email, phone: $('Normalize and Validate').first().json.phone, companyName: $('Normalize and Validate').first().json.companyName, source: $('Normalize and Validate').first().json.source }).filter(([, value]) => value !== ''))) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "961d2ba6-a61c-4d22-a45e-a0906844cb84",
+      "name": "Create Contact",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2016,
+        304
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $('Normalize and Validate').first().json;\nconst contactId = $json.contact?.id ?? $json.id;\nif (!contactId) throw new Error('HighLevel create contact returned no contactId');\nreturn [{ json: { ...lead, contactId, contactCreated: true } }];"
+      },
+      "id": "0d9fa688-0ea1-4888-b41a-32c44f71dc25",
+      "name": "Use Created Contact",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2240,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://services.leadconnectorhq.com/opportunities/search?locationId=' + encodeURIComponent($json.locationId) + '&pipelineId=' + encodeURIComponent($json.pipelineId) + '&contactId=' + encodeURIComponent($json.contactId) + '&status=all&limit=100' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Version",
+              "value": "v3"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "33fe351b-392b-4bf0-8c04-da14750101c1",
+      "name": "Search Opportunity by External ID",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2464,
+        64
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $('Use Existing Contact').isExecuted\n  ? $('Use Existing Contact').first().json\n  : $('Use Created Contact').first().json;\n\nconst opportunities = Array.isArray($json.opportunities)\n  ? $json.opportunities\n  : [];\n\nconst existing = opportunities.find(opportunity => {\n  const customFields = Array.isArray(opportunity.customFields)\n    ? opportunity.customFields\n    : [];\n\n  return customFields.some(field => {\n    const value =\n      field.fieldValueString ??\n      field.fieldValue ??\n      field.value ??\n      '';\n\n    return (\n      String(field.id) === String(lead.externalLeadIdFieldId) &&\n      String(value) === String(lead.externalLeadId)\n    );\n  });\n});\n\nreturn [{\n  json: {\n    ...lead,\n    duplicateFound: Boolean(existing),\n    existingOpportunityId: existing?.id ?? null,\n  },\n}];"
+      },
+      "id": "1950524b-0bdb-4c4c-8a37-cd2d4956ca62",
+      "name": "Verify Exact Opportunity Duplicate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2688,
+        -16
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.duplicateFound }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ca7132ec-7d45-4f72-9a97-2570c5705609",
+      "name": "Opportunity Exists?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2912,
+        -16
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: true, duplicate: true, created: false, contactId: $json.contactId, opportunityId: $json.existingOpportunityId, externalLeadId: $json.externalLeadId } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "c0b7882a-d79d-476e-89e4-a57f6521e376",
+      "name": "Respond 200 Duplicate",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        3136,
+        -112
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const required = {\n  locationId: $json.locationId,\n  pipelineId: $json.pipelineId,\n  stageId: $json.stageId,\n  serviceInterestFieldId: $json.serviceInterestFieldId,\n  externalLeadIdFieldId: $json.externalLeadIdFieldId,\n};\nconst missing = Object.entries(required)\n  .filter(([, value]) => !value || String(value).startsWith('YOUR_'))\n  .map(([name]) => name);\nif (missing.length) {\n  throw new Error('Configure HighLevel IDs before activation: ' + missing.join(', '));\n}\nreturn $input.all();"
+      },
+      "id": "20bc8723-c5ec-40d1-ae2b-075993cd3a90",
+      "name": "Check Custom Field Configuration",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3136,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://services.leadconnectorhq.com/opportunities/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Version",
+              "value": "v3"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ pipelineId: $json.pipelineId, locationId: $json.locationId, name: $json.name + ' - ' + $json.serviceInterest, pipelineStageId: $json.stageId, status: 'open', contactId: $json.contactId, monetaryValue: $json.monetaryValue, customFields: [{ id: $json.serviceInterestFieldId, fieldValue: $json.serviceInterest }, { id: $json.externalLeadIdFieldId, fieldValue: $json.externalLeadId }] }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "985fec08-0195-4dba-b59a-034686f59a9a",
+      "name": "Create Opportunity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3360,
+        80
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: true, duplicate: false, created: true, contactCreated: $('Verify Exact Opportunity Duplicate').first().json.contactCreated, contactId: $('Verify Exact Opportunity Duplicate').first().json.contactId, opportunityId: $json.opportunity?.id ?? $json.id, externalLeadId: $('Verify Exact Opportunity Duplicate').first().json.externalLeadId } }}",
+        "options": {
+          "responseCode": 201
+        }
+      },
+      "id": "c83a4832-d3ee-4801-aa38-f744ae56f255",
+      "name": "Respond 201 Created",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        3584,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const sourceNode = $prevNode.name;\nconst status = Number($json.statusCode ?? $json.httpCode ?? 502);\nconst message = $json.message ?? $json.error?.message ?? $json.error ?? 'HighLevel API request failed';\nreturn [{ json: { success: false, error: 'HIGHLEVEL_API_ERROR', sourceNode, upstreamStatus: status, message } }];"
+      },
+      "id": "9d0ec118-669a-4f2a-9fbc-b4e6ca01c191",
+      "name": "Format HighLevel API Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3584,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 502
+        }
+      },
+      "id": "4b59823a-a6a8-4653-a72b-91f252fc341f",
+      "name": "Respond 502 HighLevel Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        3808,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Manual setup required\n1. Create an HTTP Header Auth credential: `Authorization` = `Bearer YOUR_PRIVATE_INTEGRATION_TOKEN`.\n2. Select it in all four HighLevel HTTP Request nodes.\n3. Replace the five `YOUR_...` placeholders in **Normalize and Validate**.\n4. Required scopes: contacts.readonly, contacts.write, opportunities.readonly, opportunities.write.\n5. In HighLevel enable **Allow Multiple Opportunities per Contact**.\n\nWebhook requires: externalLeadId, serviceInterest, name (or firstName/lastName), and email or phone.",
+        "height": 280,
+        "width": 560
+      },
+      "id": "6af27ff7-77ce-49ea-aac7-f62f49104b27",
+      "name": "Setup Instructions",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        896,
+        -368
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Incoming Lead Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize and Validate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize and Validate": {
+      "main": [
+        [
+          {
+            "node": "Invalid Payload?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Invalid Payload?": {
+      "main": [
+        [
+          {
+            "node": "Respond 400 Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Find Duplicate Contact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Duplicate Contact": {
+      "main": [
+        [
+          {
+            "node": "Contact Exists?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format HighLevel API Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contact Exists?": {
+      "main": [
+        [
+          {
+            "node": "Use Existing Contact",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Contact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use Existing Contact": {
+      "main": [
+        [
+          {
+            "node": "Search Opportunity by External ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Contact": {
+      "main": [
+        [
+          {
+            "node": "Use Created Contact",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format HighLevel API Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use Created Contact": {
+      "main": [
+        [
+          {
+            "node": "Search Opportunity by External ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Opportunity by External ID": {
+      "main": [
+        [
+          {
+            "node": "Verify Exact Opportunity Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format HighLevel API Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Exact Opportunity Duplicate": {
+      "main": [
+        [
+          {
+            "node": "Opportunity Exists?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Opportunity Exists?": {
+      "main": [
+        [
+          {
+            "node": "Respond 200 Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Check Custom Field Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Custom Field Configuration": {
+      "main": [
+        [
+          {
+            "node": "Create Opportunity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Opportunity": {
+      "main": [
+        [
+          {
+            "node": "Respond 201 Created",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format HighLevel API Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format HighLevel API Error": {
+      "main": [
+        [
+          {
+            "node": "Respond 502 HighLevel Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "nodeGroups": [],
+  "id": "3lqgFvlfBWNyP1Ol",
+  "tags": []
+}
