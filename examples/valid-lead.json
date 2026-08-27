@@ -1,0 +1,11 @@
+{
+  "externalLeadId": "lead_demo_001",
+  "serviceInterest": "Business Automation",
+  "firstName": "Alex",
+  "lastName": "Morgan",
+  "email": "alex.morgan@example.com",
+  "phone": "+37120000000",
+  "companyName": "Example Company",
+  "source": "Website form",
+  "monetaryValue": 2500
+}
